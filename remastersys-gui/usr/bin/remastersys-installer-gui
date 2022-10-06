@@ -9,13 +9,14 @@
 
 # SYSTEM LOCALIZATION
 # Target to file:
-# /usr/share/locale/(language code)/LC_MESSAGES/remastersys-installer.mo
-TEXTDOMAIN=remastersys-installer
+# /usr/share/locale/(language code)/LC_MESSAGES/remastersys-installer-gui.mo
+TEXTDOMAIN=remastersys-installer-gui
 
 Superuser=$"ERROR: This script must run as superuser. Try with \"sudo\"."
 
 # LIBRARIES
 . /usr/lib/remastersys/libremastersys.sh
+. /usr/lib/remastersys/libremastersysgui.sh
 
 IsRoot # libremastersys.sh
 
