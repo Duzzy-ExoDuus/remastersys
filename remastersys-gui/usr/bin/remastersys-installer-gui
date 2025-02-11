@@ -1,0 +1,506 @@
+#!/bin/bash
+###################################################################
+#  REMASTERSYS                                                    #
+#    Under the GNU GPL2 License                                   #
+#    Copyright (C) 2013-2022 Daniel "Nerun" Rodrigues             #
+#    Copyright (C) 2007-2012 Tony "Fragadelic" Brijeski           #
+#    Full copyright notice: /usr/share/doc/remastersys/copyright  #
+###################################################################
+
+# SYSTEM LOCALIZATION
+# Target to file:
+# /usr/share/locale/(language code)/LC_MESSAGES/remastersys-installer-gui.mo
+TEXTDOMAIN=remastersys-installer-gui
+
+Superuser=$"ERROR: This script must run as superuser. Try with \"sudo\"."
+
+# LIBRARIES
+. /usr/lib/remastersys/libremastersys.sh
+. /usr/lib/remastersys/libremastersysgui.sh
+
+IsRoot # libremastersys.sh
+
+if [[ "$1" == @("-h"|"-?"|"--help") ]]; then
+    GiveUserHelp # libremastersys.sh
+fi
+
+# set options depending on mode - text or gui
+DIALOG="`which dialog`"
+HEIGHT="17"
+WIDTH="50"
+MENUHEIGHT="12"
+TITLE="--title "
+TEXT=""
+ENTRY="--inputbox "
+MENU="--menu"
+YESNO="--yesno "
+MSGBOX="--msgbox "
+PASSWORD="--passwordbox "
+PARTITIONPROG="cfdisk"
+TITLETEXT=$"Remastersys Installer"
+
+# Frequent texts grouped to facilitate internationalization
+YES=$"Yes"
+NO=$"No"
+PICK=$"Pick"
+INFO=$"Info"
+
+if [[ "$1" == @("-g"|"--gui") ]]; then
+    GUI="$DISPLAY"
+fi
+
+if [ "$GUI" != "" ]; then
+    testyad=`which yad`
+    
+    notfound=$"not found. Will be installed now."
+
+    if [ "$testyad" = "" ]; then
+        echo "Yad "$notfound
+        apt-get -y -q install yad
+        testyad=`which yad`
+    fi
+
+    testgparted=`which gparted`
+    if [ "$testgparted" = "" ]; then
+        echo "Gparted "$notfound
+        apt-get -y -q install gparted
+        testgparted=`which gparted`
+    fi
+
+    if [ "$testyad" != "" ]; then
+        DIALOGMENU="`which yad` --window-icon=/usr/share/icons/hicolor/16x16/apps/remastersys-installer.png --width=600 --height=400 --center"
+        DIALOG="`which yad` --window-icon=/usr/share/icons/hicolor/16x16/apps/remastersys-installer.png --center --fixed"
+        TITLE="--always-print-result --dialog-sep --image=/usr/share/icons/hicolor/48x48/apps/remastersys-installer.png --title="
+        TEXT="--text="
+        ENTRY="--entry "
+        ENTRYTEXT="--entry-text "
+        MENU="--list --column=$PICK --column=$INFO"
+        YESNO=" --button=$YES:0 --button=$NO:1 "
+        MSGBOX=" --button=Ok:0 "
+        PASSWORD="--entry --hide-text "
+
+        if [ "$testgparted" = "" ]; then
+            PARTITIONPROG="xterm -e cfdisk"
+        else
+            PARTITIONPROG="gparted"
+        fi
+    fi
+fi
+
+if [ "$DIALOG" = "" ]; then
+    echo $"Could not find \"dialog\" or \"yad\". Exiting."
+    exit 1
+fi
+
+progressbar() {
+    tail -f /usr/bin/remastersys-installer | $DIALOG $TITLE"$TITLETEXT" $TEXT"$@" --no-buttons --progress --pulsate --auto-close
+}
+
+. /etc/live/config.conf
+. /etc/remastersys.conf
+
+if [ "$LIVECDLABEL" != "" ]; then
+    TITLETEXT=$"$LIVECDLABEL Installer"
+fi
+
+# DIALOGS ######################################################################
+# Frequent texts grouped to facilitate internationalization
+EXIT=$"Exit"
+ExitInstaller=$"Exit Installer"
+ExitingInstaller=$"Exiting installer now."
+SelectDriveToPartition=$"Select a drive to partition.\nIf the only option you see is \"$ExitInstaller\" then no drive was found."
+SelectSwapPartition=$"Select a swap partition to use.\nIf the only option you see is \"$ExitInstaller\" then no swap partition was found."
+SelectInstallationPartition=$"Select a partition to install the system on.\nIf the only option you see is \"$ExitInstaller\" then no partition was found."
+SelectRootFileSystem=$"Select the file system type of the root partition."
+PasswordsDontMatch=$"Passwords do not match. Try again."
+IdiomKeyboardLayout=$"The current system language as well as\nthe current keyboard layout will continue to\nbe used by the installer until the end.\nHowever, you can change the language and\nkeyboard layout that will be installed.\n\nDo you want to change?"
+ThisIsTheInstaller=$"This is the Live CD installer.\n\nDo you want to continue?"
+SelectHomePartition=$"Select a partition to install the /home folder on.\nIf the only option you see is the root partition, then no other partitions were found."
+PutHomeInRootPartition=$"put /home on the root partition"
+SelectHomeFileSystem=$"Select the home partition file system type"
+DontFormatHomePartition=$"Don't format the home partition - not recommended unless you know what you're doing"
+CreatePartitions=$"We need to prepare the swap and install the partition now.\n\n$PARTITIONPROG will allow you to create the new partitions.\n\nYou must create or already have at least 1 system partition and 1 swap partition.\n\nIf you already have the partitions set up, just exit $PARTITIONPROG and the installation will continue.\n\nClick OK to continue."
+PleaseConfirm=$"Please confirm if this information is correct:\n\n"
+Proceed=$"\n\nDo you want to proceed?"
+RootPartition=$"Root partition - safe choice if you use a different boot loader"
+RootMBRPartition=$"Root partition MBR - this is what you want for a pendrive/USB installation"
+SystemClockSetup=$"Is your system clock set to local time?\n\nResponding \"no\" will indicate that it is set to UTC."
+SelectWhereInstallGrub=$"Select where to install grub.\n"
+DiskMBR=$"Master Boot Record (MBR) of the disk"
+SelectTimeZone=$"Select a time zone for your system"
+
+HomeText(){
+    # Return global variable HOMETEXT
+    HOMEPART="$1"
+    HFSTYPE="$2"
+    
+    if [ "$HOMEPART" != "root" ]; then
+        HOMETEXT=$"$HOMEPART will be formatted in $HFSTYPE for use as /home"
+    fi
+
+    if [ "$HFSTYPE" = "noformat" ]; then
+        HOMETEXT=$"$HOMEPART will not be formatted, but will be used as /home"
+    fi
+}
+
+GrubLoc(){
+    # Return global variables GRUBLOCTEXT and GRUBLOC
+    GRUBLOCTEST="$1"
+    TARGETPART="$2"
+    PARTDRIVE="$3"
+    
+    if [ "$GRUBLOCTEST" = "root" ]; then
+        GRUBLOCTEXT=$"root partition of $TARGETPART"
+        GRUBLOC="/dev/$TARGETPART"
+    elif [ "$GRUBLOCTEST" = "rootmbr" ]; then
+        GRUBLOCTEXT=$"root partition mbr of $TARGETPART"
+        GRUBLOC="/dev/$PARTDRIVE"
+    else
+        GRUBLOCTEXT=$"mbr of $GRUBLOCTEST"
+        GRUBLOC="/dev/$GRUBLOCTEST"
+    fi
+}
+
+ExitingInstallerNow(){
+    # GUI MODE Quiting
+    $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT"$ExitingInstaller"
+    exit 1
+}
+
+# GRAPHICAL USER INTERFACE (GUI) ###############################################
+
+if [ "$testyad" = "" ]; then
+    xmessage $"Yad not found. You can still use the installer in text-mode by typing \"sudo remastersys-installer\" in a terminal."
+    exit 1
+fi
+
+#inform them what this is and ask if they want to continue
+$DIALOG $TITLE"$TITLETEXT" $YESNO $TEXT"$ThisIsTheInstaller"
+
+if [ $? != 0 ]; then
+    exit 0
+fi
+
+FRONTTEST=`cat /etc/X11/default-display-manager | grep kdm`
+
+if [ "$FRONTTEST" = "" ]; then
+    FRONTEND="gnome"
+else
+    FRONTEND="kde"
+fi
+
+$DIALOG $TITLE"$TITLETEXT" $YESNO $TEXT"$IdiomKeyboardLayout"
+
+if [ $? = 0 ]; then
+    dpkg-reconfigure -f $FRONTEND locales
+    dpkg-reconfigure -f $FRONTEND console-data
+    #dpkg-reconfigure -f $FRONTEND console-setup
+    dpkg-reconfigure -f $FRONTEND keyboard-configuration
+fi
+
+#fix for gparted being inhibited by udisks-daemon
+killall -KILL udisks-daemon
+
+$DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT"$CreatePartitions"
+
+#choose the drive to partition
+DRIVES=`cat /proc/partitions | grep -v loop | grep -v major | grep -v "^$" | awk '{print $4}' | grep -v "[0-9]"`
+
+for i in $DRIVES; do
+    partdrive="$i"
+    partdrivesize=`grep -m 1 "$i" /proc/partitions | awk '{print $3}'`
+    partdrivemenu="$partdrivemenu $partdrive $partdrivesize"
+done
+
+PARTDRIVE=""
+while [ "$PARTDRIVE" = "" ]; do
+    PARTDRIVE=`$DIALOGMENU $TITLE"$TITLETEXT" $MENU $TEXT"$SelectDriveToPartition" $EXIT "$ExitInstaller" $partdrivemenu`
+done
+
+if [ "$?" != "0" ]; then
+    ExitingInstallerNow
+fi
+
+PARTDRIVE=`echo $PARTDRIVE | cut -d "|" -f 1`
+
+if [ "$PARTDRIVE" = $EXIT ]; then
+    ExitingInstallerNow
+fi
+
+$PARTITIONPROG /dev/$PARTDRIVE
+
+#find the swap partition
+TARGETSWAP=`fdisk -l | grep swap | awk '{print $1}' | cut -d "/" -f3`
+#TARGETSWAP=`echo $TARGETSWAP | sed -r "s/\/dev\///g"`
+for i in $TARGETSWAP; do
+    swappart="$i"
+    swappartsize=`grep -m 1 "$i" /proc/partitions | awk '{print $3}'`
+    swappartmenu="$swappartmenu $swappart $swappartsize"
+done
+
+SWAP=""
+while [ "$SWAP" = "" ]; do
+    SWAP=`$DIALOGMENU $TITLE"$TITLETEXT" $MENU $TEXT"$SelectSwapPartition" $EXIT "$ExitInstaller" $swappartmenu`
+done
+
+if [ "$?" != "0" ]; then
+    ExitingInstallerNow
+fi
+
+SWAP=`echo $SWAP | cut -d "|" -f 1`
+
+if [ "$SWAP" = $EXIT ]; then
+    ExitingInstallerNow
+fi
+
+#choose the partition to install to
+PARTITIONS=`cat /proc/partitions | grep -v "loop" | grep -v "sr0" | awk '{print $4}' | grep "[0-9]"`
+PARTINSTTEMP=`echo $PARTITIONS | sed -r "s/$SWAP//"`
+PARTINST=`echo $PARTINSTTEMP`
+for i in $PARTINST; do
+    tempsize=`grep -m 1 "$i" /proc/partitions | awk '{print $3}'`
+    if [ "$tempsize" = "1" ]; then
+        PARTINST=`echo $PARTINST | sed -r "s/$i//"`
+    fi
+done
+
+for i in $PARTINST; do
+    part="$i"
+    partsize=`grep -m 1 "$i" /proc/partitions | awk '{print $3}'`
+    partmenu="$partmenu $part $partsize"
+done
+
+TARGETPART=""
+while [ "$TARGETPART" = "" ]; do
+    TARGETPART=`$DIALOGMENU $TITLE"$TITLETEXT" $MENU $TEXT"$SelectInstallationPartition" $EXIT "$ExitInstaller" $partmenu`
+done
+
+if [ "$?" != "0" ]; then
+    ExitingInstallerNow
+fi
+
+TARGETPART=`echo $TARGETPART | cut -d "|" -f 1`
+
+if [ "$TARGETPART" = $EXIT ]; then
+    ExitingInstallerNow
+fi
+
+FSTYPE=""
+while [ "$FSTYPE" = "" ]; do
+    FSTYPE=`$DIALOGMENU $TITLE"$TITLETEXT" $MENU $TEXT"$SelectRootFileSystem" ext4 "Ext4" ext3 "Ext3" ext2 "Ext2"`
+done
+
+if [ "$?" != "0" ]; then
+    ExitingInstallerNow
+fi
+
+FSTYPE=`echo $FSTYPE | cut -d "|" -f 1`
+
+HOMEINST=`echo $PARTINST | sed -r "s/$TARGETPART//"`
+for i in $HOMEINST; do
+    homepart="$i"
+    homepartsize=`grep -m 1 "$i" /proc/partitions | awk '{print $3}'`
+    homepartmenu="$homepartmenu $homepart $homepartsize"
+done
+
+HOMEPART=""
+while [ "$HOMEPART" = "" ]; do
+    HOMEPART=`$DIALOGMENU $TITLE"$TITLETEXT" $MENU $TEXT"$SelectHomePartition" root "$PutHomeInRootPartition" $homepartmenu`
+done
+
+if [ "$?" != "0" ]; then
+    ExitingInstallerNow
+fi
+
+HOMEPART=`echo $HOMEPART | cut -d "|" -f 1`
+
+if [ "$HOMEPART" != "root" ]; then
+    HFSTYPE=""
+    while [ "$HFSTYPE" = "" ]; do
+        HFSTYPE=`$DIALOGMENU $TITLE"$TITLETEXT" $MENU $TEXT"$SelectHomeFileSystem" noformat "$DontFormatHomePartition" ext4 "Ext4" ext3 "Ext3" ext2 "Ext2"`
+    done
+fi
+
+HFSTYPE=`echo $HFSTYPE | cut -d "|" -f 1`
+
+# "NOCONFIGS=\"user-setup" means it is backup mode
+# "" means it is dist mode
+testmode=`grep "NOCONFIGS=\"user-setup" /etc/live/config.conf`
+
+if [ "$testmode" = "" ]; then
+
+    while [ "$PASSOK" != "Yes" ]; do
+        PSWD1=$"Password for root"
+        PSWD2=$"Password for root (retype)"
+        PSWD3=$"New user's full name"
+        PSWD4=$"New user's username"
+        PSWD5=$"Password for new user"
+        PSWD6=$"Password for new user (retype)"
+        PSWD7=$"Hostname for the computer"
+
+        CHOICES=`$DIALOGMENU $TITLE"$TITLETEXT" --form \
+        --field="$PSWD1":H \
+        --field="$PSWD2":H \
+        --field="$PSWD3" \
+        --field="$PSWD4" \
+        --field="$PSWD5":H \
+        --field="$PSWD6":H \
+        --field="$PSWD7"`
+
+        if [ "$?" = "0" ]; then
+            TARGETROOTPASS=`echo $CHOICES | cut -d "|" -f 1`
+            TARGETROOTPASS2=`echo $CHOICES | cut -d "|" -f 2`
+            TARGETUSERFULLNAME=`echo $CHOICES | cut -d "|" -f 3`
+            TARGETUSER=`echo $CHOICES | cut -d "|" -f 4`
+            TARGETPASS=`echo $CHOICES | cut -d "|" -f 5`
+            TARGETPASS2=`echo $CHOICES | cut -d "|" -f 6`
+            TARGETHOSTNAME=`echo $CHOICES | cut -d "|" -f 7`
+        else
+            ExitingInstallerNow
+        fi
+
+        [ "$TARGETROOTPASS" != "" ] && \
+        [ "$TARGETROOTPASS" = "$TARGETROOTPASS2" ] && \
+        [ "$TARGETUSERFULLNAME" != "" ] && \
+        [ "$TARGETUSER" != "" ] && \
+        [ "$TARGETUSER" != "$LIVE_USERNAME" ] && \
+        [ "$TARGETPASS" != "" ] && \
+        [ "$TARGETPASS" = "$TARGETPASS2" ] && \
+        [ "$TARGETROOTPASS" != "$TARGETPASS" ] && \
+        [ "$TARGETHOSTNAME" != "" ] && \
+        PASSOK="Yes"
+
+        [ "$TARGETROOTPASS" = "" ] && $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT$"Root password in blank."
+
+        [ "$TARGETROOTPASS" != "$TARGETROOTPASS2" ] && $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT$"Passwords entered for Root do not match."
+
+        [ "$TARGETUSERFULLNAME" = "" ] && $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT$"User's full name in blank."
+
+        [ "$TARGETUSER" = "" ] && $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT$"Blank username."
+
+        [ "$TARGETUSER" = "$LIVE_USERNAME" ] && $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT$"Username cannot be the same as the Live CD username."
+
+        [ "$TARGETPASS" = "" ] && $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT$"Blank user password."
+
+        [ "$TARGETPASS" != "$TARGETPASS2" ] && $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT$"Passwords entered for the user do not match."
+
+        [ "$TARGETROOTPASS" = "$TARGETPASS" ] && $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT$"Root and user passwords are the same.\n\nUse different passwords."
+
+        [ "$TARGETHOSTNAME" = "" ] && $DIALOG $TITLE"$TITLETEXT" $MSGBOX $TEXT$"Blank hostname."
+
+    done
+fi
+
+#hostname setup
+#TARGETHOSTNAME=`$DIALOG $TITLE"$TITLETEXT" $ENTRY $TEXT"Please enter the hostname for the installed system."`
+
+#grub location
+GrubSelectGUI () {
+    GrubMenu=()
+
+    Drives=$(cat /proc/partitions | grep -v loop | grep -v "Extended" | grep -v "extended" | grep -v "swap" | grep -v "Swap" | grep -v "Hidden" | grep -v major | grep -v "^$" | awk '{ print $4}')
+
+    for i in $Drives; do
+        PartDrive="$i"
+
+        if [ "$(echo "$PartDrive" | grep [0-9] )" = "" ]; then
+            GrubMenu=("${GrubMenu[@]}" "$PartDrive" "$DiskMBR")
+        fi
+    done
+
+    GrubMenu=( "${GrubMenu[@]}" "root" "$RootPartition" "rootmbr" "$RootMBRPartition" )
+
+    #grub location
+    GRUBLOCTEST=$($DIALOGMENU $TITLE"$TITLETEXT" $MENU $TEXT"$SelectWhereInstallGrub" "${GrubMenu[@]}")
+
+    ret="$?"
+
+    if [ "$ret" = "252" ]; then
+        GrubSelectGUI
+        exit 0
+    elif [ "$GRUBLOCTEST" = "" ]; then
+        GrubSelectGUI
+        exit 0
+    fi
+
+    GRUBLOCTEST=$(echo "$GRUBLOCTEST" | awk -F '|' '{print $1}')
+    
+    GrubLoc $GRUBLOCTEST $TARGETPART $PARTDRIVE
+}
+
+GrubSelectGUI # call above function
+
+#Timezone setting
+
+$DIALOG $TITLE"$TITLETEXT" $YESNO $TEXT"$SystemClockSetup"
+
+if [ $? = 0 ]; then
+    if [ "$(grep "UTC" /etc/adjtime)" != "" ]; then
+        sed -i -e "s|UTC|LOCALTIME|g" /etc/adjtime
+    fi
+else
+    if [ "$(grep "LOCALTIME" /etc/adjtime)" != "" ]; then
+        sed -i -e "s|LOCALTIME|UTC|g" /etc/adjtime
+    fi
+fi
+
+cat /usr/share/zoneinfo/zone.tab | awk '{print $3}' | grep "/" | sort > /tmp/remastersys.zoneinfo
+
+for i in `cat /tmp/remastersys.zoneinfo`; do
+    ZONES="$ZONES $i Timezone"
+done
+
+rm /tmp/remastersys.zoneinfo
+
+ZONESINFO=""
+
+while [ "$ZONESINFO" = "" ]; do
+    ZONESINFO=`$DIALOGMENU $TITLE"$TITLETEXT" $MENU $TEXT"$SelectTimeZone" $EXIT "$ExitInstaller" $ZONES`
+done
+
+if [ "$?" != "0" ]; then
+    ExitingInstallerNow
+fi
+
+ZONESINFO=`echo $ZONESINFO | cut -d "|" -f 1`
+
+if [ "$ZONESINFO" = $EXIT ]; then
+    ExitingInstallerNow
+fi
+
+echo "$ZONESINFO" > /etc/timezone
+
+cp /usr/share/zoneinfo/$ZONESINFO /etc/localtime
+
+#xterm -e dpkg-reconfigure tzdata
+#if [ "$1" = "intl" ]; then
+#xterm -e $SETLOCALE
+#xterm -e $SETCONSOLEDATA
+#xterm -e $SETXSERVER
+#fi
+
+HomeText "$HOMEPART" "$HFSTYPE"
+
+ConfirmDist=$"New user is: $TARGETUSER\nPartition: $TARGETPART\nFile System: $FSTYPE\nSwap Partition: $SWAP\nInstall GRUB on the: $GRUBLOCTEXT"
+ConfirmBackup=$"Backup Installation Partition: $TARGETPART\nFile System is: $FSTYPE\nInstall GRUB on the: $GRUBLOCTEXT"
+
+if [ "$testmode" = "" ]; then
+    $DIALOG $TITLE"$TITLETEXT" $YESNO $TEXT"$PleaseConfirm""$ConfirmDist""$Proceed"
+
+    if [ $? != 0 ]; then
+        ExitingInstallerNow
+    fi
+else
+    $DIALOG $TITLE"$TITLETEXT" $YESNO $TEXT"$PleaseConfirm""$ConfirmBackup""$Proceed"
+
+    if [ $? != 0 ]; then
+        ExitingInstallerNow
+    fi
+fi
+
+# INSTALL TO HARD DISK #########################################################
+
+# function call from /usr/bin/remastersys-installer
+InstallToHD
+# add all $@ info needed to function
+
